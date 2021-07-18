@@ -1,0 +1,1 @@
+/Users/atrn0/ghq/github.com/atrn0/mikanos/kernel/frame_buffer_config.hpp
