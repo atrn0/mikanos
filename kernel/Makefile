@@ -1,5 +1,5 @@
 TARGET = kernel.elf
-OBJS = main.o graphics.o font.o hankaku.o newlib_support.o
+OBJS = main.o graphics.o font.o hankaku.o newlib_support.o console.o
 DEPENDS = $(join $(dir $(OBJS)),$(addprefix .,$(notdir $(OBJS:.o=.d))))
 
 CFLAGS   += -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone
@@ -24,7 +24,9 @@ kernel.elf: $(OBJS) Makefile
 .%.d: %.cpp
 	clang++ $(CPPFLAGS) $(CXXFLAGS) -MM $< > $@
 	$(eval OBJ = $(<:.cpp=.o))
-	sed --in-place 's|$(notdir $(OBJ))|$(OBJ)|' $@
+# sed --in-place 's|$(notdir $(OBJ))|$(OBJ)|' $@
+# for macOS
+	sed -I '' -e 's|$(notdir $(OBJ))|$(OBJ)|' $@
 
 %.o: %.c Makefile
 	clang $(CPPFLAGS) $(CFLAGS) -c $<
