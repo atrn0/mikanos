@@ -3,3 +3,4 @@ bin/
 *.o
 *.elf
 mnt/
+.*.d
