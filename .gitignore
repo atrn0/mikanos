@@ -4,3 +4,4 @@ bin/
 *.elf
 mnt/
 .*.d
+*.bin
