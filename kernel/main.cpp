@@ -19,6 +19,7 @@
 #include "logger.hpp"
 #include "mouse.hpp"
 #include "pci.hpp"
+#include "queue.hpp"
 #include "usb/classdriver/mouse.hpp"
 #include "usb/device.hpp"
 #include "usb/memory.hpp"
@@ -77,13 +78,16 @@ void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
 
 usb::xhci::Controller* xhc;
 
+struct Message {
+  enum Type {
+    kInterruptXHCI,
+  } type;
+};
+
+ArrayQueue<Message>* main_queue;
+
 __attribute__((interrupt)) void IntHandlerXHCI(InterruptFrame* frame) {
-  while (xhc->PrimaryEventRing()->HasFront()) {
-    if (auto err = ProcessEvent(*xhc)) {
-      Log(kError, "Error while ProcessEvent: %s at %s:%d\n", err.Name(),
-          err.File(), err.Line());
-    }
-  }
+  main_queue->Push(Message{Message::kInterruptXHCI});
   NotifyEndOfInterrupt();
 }
 
@@ -113,10 +117,15 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
   console = new (console_buf)
       Console{*pixel_writer, kDesktopFGColor, kDesktopBGColor};
   printk("Welcome %s!!\n", "@atrn0");
+  printk("day07b\n");
   SetLogLevel(kInfo);
 
   mouse_cursor = new (mouse_cursor_buf)
       MouseCursor{pixel_writer, kDesktopBGColor, {300, 200}};
+
+  std::array<Message, 32> main_queue_data;
+  ArrayQueue<Message> main_queue{main_queue_data};
+  ::main_queue = &main_queue;  // MEMO: これどういう意味?
 
   auto err = pci::ScanAllBus();
   Log(kDebug, "ScanAllBus: %s\n", err.Name());
@@ -177,7 +186,6 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
   xhc.Run();
 
   ::xhc = &xhc;
-  __asm__("sti");
 
   usb::HIDMouseDriver::default_observer = MouseObserver;
 
@@ -191,6 +199,38 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
             err.File(), err.Line());
         continue;
       }
+    }
+  }
+
+  while (true) /* event loop */ {
+    // main_queueの排他制御のため、割り込みの受付を停止する。
+    __asm__("cli");
+    if (main_queue.Count() == 0) {
+      // 割り込みがキューに入っていない場合、
+      // 割り込みを受け付けるようにしてからCPUをスリープさせる
+      __asm__("sti\n\thlt");
+      // 割り込みが発生した場合CPUは割り込みを処理した後、
+      // ここから処理を再開する。
+      continue;
+    }
+
+    Message msg = main_queue.Front();
+    main_queue.Pop();
+    __asm__("sti");  // 割り込みを受け付ける
+
+    switch (msg.type) {
+      case Message::kInterruptXHCI:
+        while (xhc.PrimaryEventRing()->HasFront()) {
+          // 引数がusb::xhciにあるので、
+          // usb::xhci::ProcessEventはprefixなしで使える
+          if (auto err = ProcessEvent(xhc)) {
+            Log(kError, "Error while ProcessEvent: %s at %s:%d\n", err.Name(),
+                err.File(), err.Line());
+          }
+        }
+        break;
+      default:
+        Log(kError, "Unknown message type: %d\n", msg.type);
     }
   }
 
