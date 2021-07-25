@@ -1,5 +1,7 @@
 #include "usb/xhci/xhci.hpp"
 
+#include <cstring>
+
 #include "logger.hpp"
 #include "usb/descriptor.hpp"
 #include "usb/device.hpp"
