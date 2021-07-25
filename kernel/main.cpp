@@ -17,6 +17,7 @@
 #include "graphics.hpp"
 #include "interrupt.hpp"
 #include "logger.hpp"
+#include "memory_manager.hpp"
 #include "memory_map.hpp"
 #include "mouse.hpp"
 #include "paging.hpp"
@@ -50,6 +51,9 @@ int printk(const char* format, ...) {
   console->PutString(s);
   return result;
 }
+
+char memory_manager_buf[sizeof(BitmapMemoryManager)];
+BitmapMemoryManager* memory_manager;
 
 char mouse_cursor_buf[sizeof(MouseCursor)];
 MouseCursor* mouse_cursor;
@@ -127,7 +131,7 @@ extern "C" void KernelMainNewStack(
   console = new (console_buf)
       Console{*pixel_writer, kDesktopFGColor, kDesktopBGColor};
   printk("Welcome %s!!\n", "@atrn0");
-  printk("day08a\n");
+  printk("day08c\n");
   SetLogLevel(kInfo);
 
   // セグメンテーション用のデータをUEFIからOSの管理に移す
@@ -141,18 +145,38 @@ extern "C" void KernelMainNewStack(
   // ページングの設定
   SetupIdentityPageTable();
 
+  ::memory_manager = new (memory_manager_buf) BitmapMemoryManager;
+
   const auto memory_map_base = reinterpret_cast<uintptr_t>(memory_map.buffer);
+  uintptr_t available_end = 0;
+  //  memory_mapの各descriptorを見る
   for (uintptr_t iter = memory_map_base;
        iter < memory_map_base + memory_map.map_size;
        iter += memory_map.descriptor_size) {
-    auto desc = reinterpret_cast<MemoryDescriptor*>(iter);
+    auto desc = reinterpret_cast<const MemoryDescriptor*>(iter);
+    // available_endからphysical_startをallcatedとする
+    if (available_end < desc->physical_start) {
+      memory_manager->MarkAllocated(
+          FrameID{available_end / kBytesPerFrame},
+          (desc->physical_start - available_end) / kBytesPerFrame);
+    }
+
+    // descの物理メモリ領域の終わり
+    const auto physical_end =
+        desc->physical_start + desc->number_of_pages * kUEFIPageSize;
+
+    // このdescがOSが自由に使える領域なら空き、使えない領域ならallocatedとする
     if (IsAvailable(static_cast<MemoryType>(desc->type))) {
-      printk("type = %u, phys = %08lx - %08lx, pages = %lu, attr = %08lx\n",
-             desc->type, desc->physical_start,
-             desc->physical_start + desc->number_of_pages * 4096 - 1,
-             desc->number_of_pages, desc->attribute);
+      available_end = physical_end;
+    } else {
+      memory_manager->MarkAllocated(
+          FrameID{desc->physical_start / kBytesPerFrame},
+          desc->number_of_pages * kUEFIPageSize / kBytesPerFrame);
     }
   }
+  // available_endまでを使える領域とする(OSが使える領域のみ空きになっている)
+  memory_manager->SetMemoryRange(FrameID{1},
+                                 FrameID{available_end / kBytesPerFrame});
 
   mouse_cursor = new (mouse_cursor_buf)
       MouseCursor{pixel_writer, kDesktopBGColor, {300, 200}};
