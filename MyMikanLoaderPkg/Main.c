@@ -12,15 +12,7 @@
 
 #include "elf.hpp"
 #include "frame_buffer_config.hpp"
-
-struct MemoryMap {
-  UINTN buffer_size;
-  VOID* buffer;
-  UINTN map_size;
-  UINTN map_key;
-  UINTN descriptor_size;
-  UINT32 descriptor_version;
-};
+#include "memory_map.hpp"
 
 EFI_STATUS GetMemoryMap(struct MemoryMap* map) {
   if (map->buffer == NULL) {
@@ -352,9 +344,9 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle,
   }
 
   typedef void __attribute__((sysv_abi))
-  EntryPointType(const struct FrameBufferConfig*);
+  EntryPointType(const struct FrameBufferConfig*, const struct MemoryMap*);
   EntryPointType* entry_point = (EntryPointType*)entry_addr;
-  entry_point(&config);
+  entry_point(&config, &memmap);
   // #@@range_end(pass_buffer_config)
 
   Print(L"All done\n");
