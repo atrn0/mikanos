@@ -16,6 +16,7 @@
 #include "frame_buffer_config.hpp"
 #include "graphics.hpp"
 #include "interrupt.hpp"
+#include "layer.hpp"
 #include "logger.hpp"
 #include "memory_manager.hpp"
 #include "memory_map.hpp"
@@ -29,9 +30,7 @@
 #include "usb/memory.hpp"
 #include "usb/xhci/trb.hpp"
 #include "usb/xhci/xhci.hpp"
-
-const PixelColor kDesktopBGColor{45, 118, 237};
-const PixelColor kDesktopFGColor{255, 255, 255};
+#include "window.hpp"
 
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter* pixel_writer;
@@ -55,11 +54,12 @@ int printk(const char* format, ...) {
 char memory_manager_buf[sizeof(BitmapMemoryManager)];
 BitmapMemoryManager* memory_manager;
 
-char mouse_cursor_buf[sizeof(MouseCursor)];
-MouseCursor* mouse_cursor;
+unsigned int mouse_layer_id;
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y) {
-  mouse_cursor->MoveRelative({displacement_x, displacement_y});
+  Log(kInfo, "mouse_layer_id: %d\n", mouse_layer_id);
+  layer_manager->MoveRelative(mouse_layer_id, {displacement_x, displacement_y});
+  layer_manager->Draw();
 }
 
 void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
@@ -117,22 +117,13 @@ extern "C" void KernelMainNewStack(
       break;
   }
 
-  const int kFrameWidth = frame_buffer_config.horizontal_resolution;
-  const int kFrameHeight = frame_buffer_config.vertical_resolution;
-  FillRectangle(*pixel_writer, {0, 0}, {kFrameWidth, kFrameHeight - 50},
-                kDesktopBGColor);
-  FillRectangle(*pixel_writer, {0, kFrameHeight - 50}, {kFrameWidth, 50},
-                {1, 8, 17});
-  FillRectangle(*pixel_writer, {0, kFrameHeight - 50},
-                {kFrameWidth / 5, kFrameHeight - 50}, {80, 80, 80});
-  Drawrectangle(*pixel_writer, {10, kFrameHeight - 40}, {30, 30},
-                {160, 160, 160});
+  DrawDesktop(*pixel_writer);
 
-  console = new (console_buf)
-      Console{*pixel_writer, kDesktopFGColor, kDesktopBGColor};
+  console = new (console_buf) Console{kDesktopFGColor, kDesktopBGColor};
+  console->SetWriter(pixel_writer);
   printk("Welcome %s!!\n", "@atrn0");
-  printk("day08c\n");
-  SetLogLevel(kInfo);
+  printk("day09a\n");
+  SetLogLevel(kDebug);
 
   // セグメンテーション用のデータをUEFIからOSの管理に移す
   SetupSegments();
@@ -178,8 +169,13 @@ extern "C" void KernelMainNewStack(
   memory_manager->SetMemoryRange(FrameID{1},
                                  FrameID{available_end / kBytesPerFrame});
 
-  mouse_cursor = new (mouse_cursor_buf)
-      MouseCursor{pixel_writer, kDesktopBGColor, {300, 200}};
+  // ヒープ領域を確保する
+  // ここからnewなどが使える
+  if (auto err = InitializeHeap(*memory_manager)) {
+    Log(kError, "failed to allocate pages: %s at %s:%d\n", err.Name(),
+        err.File(), err.Line());
+    exit(1);
+  }
 
   std::array<Message, 32> main_queue_data;
   ArrayQueue<Message> main_queue{main_queue_data};
@@ -258,6 +254,37 @@ extern "C" void KernelMainNewStack(
       }
     }
   }
+
+  // レイヤーを使って描画
+  const int kFrameWidth = frame_buffer_config.horizontal_resolution;
+  const int kFrameHeight = frame_buffer_config.vertical_resolution;
+  Log(kDebug, "kFrameWidth: %d, kFrameHeight: %d\n", kFrameWidth, kFrameHeight);
+
+  // setup console window
+  auto bgwindow = std::make_shared<Window>(kFrameWidth, kFrameHeight);
+  Log(kDebug, "bgwindow height: %d\n", bgwindow->Height());
+  auto bgwriter = bgwindow->Writer();
+  Log(kDebug, "bgwriter height: %d\n", bgwriter->Height());
+  DrawDesktop(*bgwriter);
+  console->SetWriter(bgwriter);
+
+  // setup mouse window
+  auto mouse_window =
+      std::make_shared<Window>(kMouseCursorWidth, kMouseCursorHeight);
+  mouse_window->SetTransparentColor(kMouseTransparentColor);
+  DrawMouseCursor(mouse_window->Writer(), {0, 0});
+
+  layer_manager = new LayerManager;
+  layer_manager->SetWriter(pixel_writer);
+
+  auto bglayer_id =
+      layer_manager->NewLayer().SetWindow(bgwindow).Move({0, 0}).ID();
+  mouse_layer_id =
+      layer_manager->NewLayer().SetWindow(mouse_window).Move({200, 200}).ID();
+
+  layer_manager->UpDown(bglayer_id, 0);
+  layer_manager->UpDown(mouse_layer_id, 1);
+  layer_manager->Draw();
 
   while (true) /* event loop */ {
     // main_queueの排他制御のため、割り込みの受付を停止する。

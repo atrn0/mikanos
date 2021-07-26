@@ -5,9 +5,19 @@ void _exit(void) {
   while (1) __asm__("hlt");
 }
 
+caddr_t program_break, program_break_end;
+
+// sbrkを実装すると動的メモリ管理によるnewが使用できる
 caddr_t sbrk(int incr) {
-  errno = ENOMEM;
-  return (caddr_t)-1;
+  if (program_break == 0 || program_break + incr >= program_break_end) {
+    errno = ENOMEM;
+    return (caddr_t)-1;
+  }
+
+  // prev_breakからprogram_breakを使える領域とする
+  caddr_t prev_break = program_break;
+  program_break += incr;
+  return prev_break;
 }
 
 int getpid(void) { return 1; }
