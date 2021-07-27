@@ -25,6 +25,7 @@
 #include "pci.hpp"
 #include "queue.hpp"
 #include "segment.hpp"
+#include "timer.hpp"
 #include "usb/classdriver/mouse.hpp"
 #include "usb/device.hpp"
 #include "usb/memory.hpp"
@@ -57,9 +58,12 @@ BitmapMemoryManager* memory_manager;
 unsigned int mouse_layer_id;
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y) {
-  Log(kInfo, "mouse_layer_id: %d\n", mouse_layer_id);
   layer_manager->MoveRelative(mouse_layer_id, {displacement_x, displacement_y});
+  StartLAPICTimer();
   layer_manager->Draw();
+  auto elapsed = LAPICTimerElapsed();
+  StopLAPICTimer();
+  printk("MouseObserver: elapsed = %u\n", elapsed);
 }
 
 void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
@@ -122,8 +126,11 @@ extern "C" void KernelMainNewStack(
   console = new (console_buf) Console{kDesktopFGColor, kDesktopBGColor};
   console->SetWriter(pixel_writer);
   printk("Welcome %s!!\n", "@atrn0");
-  printk("day09a\n");
-  SetLogLevel(kDebug);
+  printk("day09b\n");
+  SetLogLevel(kWarn);
+
+  // タイマーの初期化
+  InitializeLAPICTimer();
 
   // セグメンテーション用のデータをUEFIからOSの管理に移す
   SetupSegments();
@@ -261,7 +268,8 @@ extern "C" void KernelMainNewStack(
   Log(kDebug, "kFrameWidth: %d, kFrameHeight: %d\n", kFrameWidth, kFrameHeight);
 
   // setup console window
-  auto bgwindow = std::make_shared<Window>(kFrameWidth, kFrameHeight);
+  auto bgwindow = std::make_shared<Window>(kFrameWidth, kFrameHeight,
+                                           frame_buffer_config.pixel_format);
   Log(kDebug, "bgwindow height: %d\n", bgwindow->Height());
   auto bgwriter = bgwindow->Writer();
   Log(kDebug, "bgwriter height: %d\n", bgwriter->Height());
@@ -269,13 +277,19 @@ extern "C" void KernelMainNewStack(
   console->SetWriter(bgwriter);
 
   // setup mouse window
-  auto mouse_window =
-      std::make_shared<Window>(kMouseCursorWidth, kMouseCursorHeight);
+  auto mouse_window = std::make_shared<Window>(
+      kMouseCursorWidth, kMouseCursorHeight, frame_buffer_config.pixel_format);
   mouse_window->SetTransparentColor(kMouseTransparentColor);
   DrawMouseCursor(mouse_window->Writer(), {0, 0});
 
+  FrameBuffer screen;
+  if (auto err = screen.Initialize(frame_buffer_config)) {
+    Log(kError, "failed to initialize frame buffer: %s at %s:%d\n", err.Name(),
+        err.File(), err.Line());
+  }
+
   layer_manager = new LayerManager;
-  layer_manager->SetWriter(pixel_writer);
+  layer_manager->SetWriter(&screen);
 
   auto bglayer_id =
       layer_manager->NewLayer().SetWindow(bgwindow).Move({0, 0}).ID();
