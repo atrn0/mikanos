@@ -48,6 +48,13 @@ int printk(const char* format, ...) {
   result = vsprintf(s, format, ap);
   va_end(ap);
 
+  StartLAPICTimer();
+  console->PutString(s);
+  auto elapsed = LAPICTimerElapsed();
+  StopLAPICTimer();
+
+  sprintf(s, "[%9d]", elapsed);
+
   console->PutString(s);
   return result;
 }
@@ -274,7 +281,7 @@ extern "C" void KernelMainNewStack(
   auto bgwriter = bgwindow->Writer();
   Log(kDebug, "bgwriter height: %d\n", bgwriter->Height());
   DrawDesktop(*bgwriter);
-  console->SetWriter(bgwriter);
+  console->SetWindow(bgwindow);
 
   // setup mouse window
   auto mouse_window = std::make_shared<Window>(
