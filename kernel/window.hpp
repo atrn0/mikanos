@@ -81,3 +81,5 @@ class Window {
   // UEFIで設定したframe_bufferに書き込むときにコピーするbuffer
   FrameBuffer shadow_buffer_{};
 };
+
+void DrawWindow(PixelWriter& writer, const char* title);
