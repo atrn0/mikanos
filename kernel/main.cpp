@@ -59,13 +59,37 @@ unsigned int mouse_layer_id;
 Vector2D<int> screen_size;
 Vector2D<int> mouse_position;
 
-void MouseObserver(int8_t displacement_x, int8_t displacement_y) {
+void MouseObserver(uint8_t buttons, int8_t displacement_x,
+                   int8_t displacement_y) {
+  static unsigned int mouse_drag_layer_id = 0;
+  static uint8_t previous_buttons = 0;
+
+  const auto oldpos = mouse_position;
   auto newpos = mouse_position + Vector2D<int>{displacement_x, displacement_y};
   newpos = ElementMin(newpos, screen_size + Vector2D<int>{-1, -1});
   mouse_position = ElementMax(newpos, {0, 0});
 
+  const auto posdiff = mouse_position - oldpos;
+
   layer_manager->Move(mouse_layer_id, mouse_position);
-  layer_manager->Draw();
+
+  const bool previous_left_pressed = (previous_buttons & 0x01);
+  const bool left_pressed = (buttons & 0x01);
+  if (!previous_left_pressed && left_pressed) {
+    auto layer =
+        layer_manager->FindLayerByPosition(mouse_position, mouse_layer_id);
+    if (layer && layer->IsDraggable()) {
+      mouse_drag_layer_id = layer->ID();
+    }
+  } else if (previous_left_pressed && left_pressed) {
+    if (mouse_drag_layer_id > 0) {
+      layer_manager->MoveRelative(mouse_drag_layer_id, posdiff);
+    }
+  } else if (previous_left_pressed && !left_pressed) {
+    mouse_drag_layer_id = 0;
+  }
+
+  previous_buttons = buttons;
 }
 
 void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
@@ -128,7 +152,7 @@ extern "C" void KernelMainNewStack(
   console = new (console_buf) Console{kDesktopFGColor, kDesktopBGColor};
   console->SetWriter(pixel_writer);
   printk("Welcome %s!!\n", "@atrn0");
-  printk("day09b\n");
+  printk("day10g\n");
   SetLogLevel(kWarn);
 
   // セグメンテーション用のデータをUEFIからOSの管理に移す
@@ -274,7 +298,6 @@ extern "C" void KernelMainNewStack(
   auto bgwriter = bgwindow->Writer();
   Log(kDebug, "bgwriter height: %d\n", bgwriter->Height());
   DrawDesktop(*bgwriter);
-  console->SetWindow(bgwindow);
 
   // setup mouse window
   auto mouse_window = std::make_shared<Window>(
@@ -285,10 +308,13 @@ extern "C" void KernelMainNewStack(
   mouse_position = {200, 200};
 
   auto main_window =
-      std::make_shared<Window>(160, 68, frame_buffer_config.pixel_format);
+      std::make_shared<Window>(160, 52, frame_buffer_config.pixel_format);
   DrawWindow(*main_window->Writer(), "Hello Window");
-  WriteString(*main_window->Writer(), {24, 28}, "Welcome to", {0, 0, 0});
-  WriteString(*main_window->Writer(), {24, 44}, " MikanOS world!", {0, 0, 0});
+
+  auto console_window =
+      std::make_shared<Window>(Console::kColumns * 8, Console::kRows * 16,
+                               frame_buffer_config.pixel_format);
+  console->SetWindow(console_window);
 
   FrameBuffer screen;
   if (auto err = screen.Initialize(frame_buffer_config)) {
@@ -305,21 +331,38 @@ extern "C" void KernelMainNewStack(
                        .SetWindow(mouse_window)
                        .Move(mouse_position)
                        .ID();
-  auto main_window_layer_id =
-      layer_manager->NewLayer().SetWindow(main_window).Move({300, 100}).ID();
+  auto main_window_layer_id = layer_manager->NewLayer()
+                                  .SetWindow(main_window)
+                                  .SetDraggable(true)
+                                  .Move({300, 100})
+                                  .ID();
+
+  console->SetLayerID(
+      layer_manager->NewLayer().SetWindow(console_window).Move({0, 0}).ID());
 
   layer_manager->UpDown(bglayer_id, 0);
-  layer_manager->UpDown(main_window_layer_id, 1);
-  layer_manager->UpDown(mouse_layer_id, 2);
-  layer_manager->Draw();
+  layer_manager->UpDown(console->LayerID(), 1);
+  layer_manager->UpDown(main_window_layer_id, 2);
+  layer_manager->UpDown(mouse_layer_id, 3);
+  layer_manager->Draw({{0, 0}, screen_size});
+
+  char str[128];
+  unsigned int count = 0;
 
   while (true) /* event loop */ {
+    ++count;
+    sprintf(str, "%010u", count);
+    FillRectangle(*main_window->Writer(), {24, 28}, {8 * 10, 16},
+                  {0xc6, 0xc6, 0xc6});
+    WriteString(*main_window->Writer(), {24, 28}, str, {0, 0, 0});
+    layer_manager->Draw(main_window_layer_id);
+
     // main_queueの排他制御のため、割り込みの受付を停止する。
     __asm__("cli");
     if (main_queue.Count() == 0) {
       // 割り込みがキューに入っていない場合、
       // 割り込みを受け付けるようにしてからCPUをスリープさせる
-      __asm__("sti\n\thlt");
+      __asm__("sti");
       // 割り込みが発生した場合CPUは割り込みを処理した後、
       // ここから処理を再開する。
       continue;
