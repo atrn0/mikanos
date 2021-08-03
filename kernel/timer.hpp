@@ -43,5 +43,9 @@ class TimerManager {
 };
 
 extern TimerManager* timer_manager;
+// LAPIC Timerの周波数(1秒あたりのカウント数)
+extern unsigned long lapic_timer_freq;
+// 1秒にTick()を呼ぶ回数
+const int kTimerFreq = 100;
 
 void LAPICTimerOnInterrupt();
