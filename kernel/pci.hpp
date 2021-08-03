@@ -164,3 +164,5 @@ Error ConfigureMSIFixedDestination(const Device& dev, uint8_t apic_id,
                                    uint8_t vector,
                                    unsigned int num_vector_exponent);
 }  // namespace pci
+
+void InitializePCI();
